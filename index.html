@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AetherDraft | Gestural Mockup Engine</title>
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- MediaPipe Hands -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <style>
+        :root {
+            --bg-dark: #09090b;
+            --bg-panel: rgba(20, 20, 25, 0.6);
+            --border-glass: rgba(255, 255, 255, 0.08);
+            --accent-primary: #06b6d4; /* Cyan */
+            --accent-secondary: #8b5cf6; /* Violet */
+            --accent-gradient: linear-gradient(135deg, #06b6d4, #8b5cf6);
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --font-main: 'Outfit', sans-serif;
+            --cursor-size: 20px;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; }
+        
+        body {
+            font-family: var(--font-main);
+            background-color: var(--bg-dark);
+            background-image: 
+                radial-gradient(circle at 15% 50%, rgba(6, 182, 212, 0.15), transparent 25%),
+                radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.15), transparent 25%);
+            color: var(--text-main);
+            overflow: hidden;
+            height: 100vh;
+            width: 100vw;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Utilities */
+        .glass {
+            background: var(--bg-panel);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--border-glass);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid var(--border-glass);
+            color: var(--text-main);
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: var(--font-main);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .btn:hover { background: rgba(255, 255, 255, 0.1); border-color: var(--accent-primary); transform: translateY(-1px); }
+        .btn.active { background: var(--accent-gradient); border-color: transparent; }
+
+        /* UI Structure */
+        #app-header {
+            height: 60px;
+            padding: 0 24px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            z-index: 100;
+        }
+
+        .logo { font-weight: 700; font-size: 1.2rem; letter-spacing: 1px; display: flex; align-items: center; gap: 10px; }
+        .logo i { background: var(--accent-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+
+        #workspace {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+        }
+
+        /* Sidebar Tools */
+        #toolbar {
+            width: 70px;
+            margin: 20px;
+            border-radius: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 16px 0;
+            gap: 16px;
+            z-index: 50;
+        }
+        
+        .tool-btn {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 1.1rem;
+            color: var(--text-muted);
+            cursor: pointer;
+            transition: 0.2s;
+            position: relative;
+        }
+        .tool-btn:hover { color: var(--text-main); background: rgba(255,255,255,0.05); }
+        .tool-btn.selected { 
+            background: var(--accent-gradient); 
+            color: white; 
+            box-shadow: 0 0 15px rgba(6, 182, 212, 0.5);   
+        }
+        .tool-btn::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            left: 60px;
+            background: #1e293b;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            opacity: 0;
+            pointer-events: none;
+            transition: 0.2s;
+            white-space: nowrap;
+        }
+        .tool-btn:hover::after { opacity: 1; left: 55px; }
+
+        /* Canvas */
+        #canvas-container {
+            flex: 1;
+            margin: 20px 20px 20px 0;
+            border-radius: 16px;
+            position: relative;
+            overflow: hidden;
+            background: #1e1e24; /* Darker bg for the canvas itself to simulate screen */
+            box-shadow: inset 0 0 50px rgba(0,0,0,0.5);
+        }
+
+        #mockup-canvas {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        /* Draggable Elements */
+        .mk-el {
+            position: absolute;
+            cursor: grab;
+            transition: box-shadow 0.2s, transform 0.1s;
+        }
+        .mk-el:active, .mk-el.dragging { cursor: grabbing; z-index: 1000; }
+        .mk-el.selected {
+            outline: 2px solid var(--accent-primary);
+            box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+        }
+
+        /* Specific Element Styles */
+        .mk-box { background: #334155; border-radius: 8px; }
+        .mk-btn { background: #3b82f6; color: white; border: none; padding: 10px 20px; border-radius: 6px; font-family: inherit; }
+        .mk-text { color: white; background: transparent; border: 1px dashed transparent; padding: 5px; }
+        .mk-text:hover { border-color: rgba(255,255,255,0.2); }
+        .mk-text input { background: transparent; border: none; color: inherit; font-size: inherit; font-family: inherit; width: 100%; outline: none; }
+        .mk-img { background: #cbd5e1; display: flex; align-items: center; justify-content: center; overflow: hidden; color: #64748b; }
+        
+        /* Properties Panel */
+        #properties-panel {
+            width: 250px;
+            margin: 20px 20px 20px 0;
+            border-radius: 16px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            z-index: 50;
+            transform: translateX(0);
+            transition: transform 0.3s ease;
+        }
+        #properties-panel.hidden { transform: translateX(280px); display: none;} /* Hide it completely or shift */
+
+        .prop-group { display: flex; flex-direction: column; gap: 8px; }
+        .prop-label { font-size: 0.8rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+        .prop-input { 
+            background: rgba(0,0,0,0.3); 
+            border: 1px solid var(--border-glass); 
+            padding: 8px; 
+            border-radius: 6px; 
+            color: white; 
+            outline: none;
+            font-family: inherit;
+        }
+        .prop-input:focus { border-color: var(--accent-primary); }
+        .prop-row { display: flex; gap: 10px; }
+
+        /* Hand Tracking Overlay */
+        #hand-overlay {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            width: 200px;
+            height: 150px;
+            border-radius: 12px;
+            overflow: hidden;
+            z-index: 1000;
+            border: 2px solid var(--border-glass);
+            background: black;
+            transition: opacity 0.5s;
+        }
+        #hand-overlay.hidden { opacity: 0; pointer-events: none; }
+        
+        #webcam-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror */
+        }
+
+        #gesture-indicator {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #ef4444; /* Red = No Hand */
+            box-shadow: 0 0 10px #ef4444;
+            transition: 0.3s;
+        }
+        #gesture-indicator.active { background: #22c55e; box-shadow: 0 0 10px #22c55e; } /* Green = Hand detected */
+
+        /* Virtual Cursor */
+        #virtual-cursor {
+            position: fixed;
+            top: 0; 
+            left: 0;
+            width: var(--cursor-size);
+            height: var(--cursor-size);
+            border: 2px solid var(--accent-primary);
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 9999;
+            transform: translate(-50%, -50%);
+            transition: width 0.1s, height 0.1s, background-color 0.1s;
+            mix-blend-mode: exclusion;
+            display: none; /* Hidden by default until hand detected */
+        }
+        
+        #virtual-cursor.pinching {
+            background-color: var(--accent-primary);
+            width: 10px;
+            height: 10px;
+        }
+
+        /* Toggle Button for Camera */
+        #cam-toggle {
+            position: absolute;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 0.8rem;
+            padding: 4px 10px;
+        }
+
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header id="app-header" class="glass">
+        <div class="logo">
+            <i class="fa-solid fa-shapes"></i>
+            <span>AETHER DRAFT</span>
+        </div>
+        <div style="display: flex; gap: 10px;">
+            <button class="btn" onclick="clearCanvas()"><i class="fa-solid fa-trash"></i> Reset</button>
+            <div style="border-right: 1px solid var(--border-glass); margin: 0 10px;"></div>
+            <button class="btn" onclick="loadTemplate('landing')">Landing Page</button>
+            <button class="btn" onclick="loadTemplate('login')">Login Screen</button>
+        </div>
+        <div>
+            <button class="btn" onclick="toggleHandTracking()" id="hand-btn">
+                <i class="fa-solid fa-hand-sparkles"></i> Enable Hand Controls
+            </button>
+        </div>
+    </header>
+
+    <div id="workspace">
+        <!-- Toolbar -->
+        <aside id="toolbar" class="glass">
+            <div class="tool-btn selected" data-tool="select" onclick="setTool('select')" data-tooltip="Selection Tool (V)">
+                <i class="fa-solid fa-arrow-pointer"></i>
+            </div>
+            <div class="tool-btn" data-tool="box" onclick="setTool('box')" data-tooltip="Box Container (R)">
+                <i class="fa-regular fa-square"></i>
+            </div>
+            <div class="tool-btn" data-tool="text" onclick="setTool('text')" data-tooltip="Text Label (T)">
+                <i class="fa-solid fa-font"></i>
+            </div>
+            <div class="tool-btn" data-tool="button" onclick="setTool('button')" data-tooltip="Button (B)">
+                <i class="fa-solid fa-mobile-button"></i>
+            </div>
+            <div class="tool-btn" data-tool="image" onclick="setTool('image')" data-tooltip="Image Holder (I)">
+                <i class="fa-regular fa-image"></i>
+            </div>
+        </aside>
+
+        <!-- Canvas -->
+        <main id="canvas-container">
+            <div id="mockup-canvas">
+                <!-- Elements will be injected here -->
+            </div>
+        </main>
+
+        <!-- Properties -->
+        <aside id="properties-panel" class="glass">
+            <h3 style="margin-bottom: 10px; font-weight: 600;">Properties</h3>
+            <div id="prop-content">
+                <div class="prop-group">
+                    <label class="prop-label">Selection</label>
+                    <div style="color: var(--text-muted); font-style: italic;">No element selected</div>
+                </div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Hand Tracking Overlay -->
+    <div id="hand-overlay" class="hidden">
+        <video id="webcam-video" playsinline></video>
+        <div id="gesture-indicator"></div>
+        <button id="cam-toggle" class="btn" onclick="toggleCameraView()">Hide View</button>
+    </div>
+
+    <!-- Virtual Cursor -->
+    <div id="virtual-cursor"></div>
+
+    <script>
+        // --- State Management ---
+        const state = {
+            tool: 'select',
+            selectedId: null,
+            elements: [],
+            isDragging: false,
+            dragStart: { x: 0, y: 0 },
+            elStart: { x: 0, y: 0 },
+            handTrackingActive: false,
+            pinchState: false // false = open, true = pinching
+        };
+
+        const canvas = document.getElementById('mockup-canvas');
+        const propertiesPanel = document.getElementById('prop-content');
+        const cursor = document.getElementById('virtual-cursor');
+        
+        // --- Templates ---
+        const templates = {
+            landing: [
+                { id: 'nav-bg', type: 'box', x: 0, y: 0, w: 100, h: 80, bg: '#1e293b', unitW: '%', unitH: 'px' },
+                { id: 'logo-text', type: 'text', x: 30, y: 25, content: 'BrandLogo', size: '24px', color: '#fff', weight: 'bold' },
+                { id: 'hero-box', type: 'box', x: 10, y: 150, w: 400, h: 300, bg: '#334155' },
+                { id: 'hero-title', type: 'text', x: 450, y: 150, content: 'Build the Future.', size: '48px', color: '#fff', weight: '700' },
+                { id: 'hero-sub', type: 'text', x: 450, y: 220, content: 'Design stunning interfaces with gestures.', size: '18px', color: '#94a3b8' },
+                { id: 'hero-btn', type: 'button', x: 450, y: 280, content: 'Get Started', bg: '#3b82f6', color: '#fff' }
+            ],
+            login: [
+                { id: 'login-card', type: 'box', x: 'center', y: 'center', w: 400, h: 500, bg: '#1e293b', radius: '16px' },
+                { id: 'login-title', type: 'text', x: 'center', y: 150, content: 'Welcome Back', size: '32px', color: '#fff' },
+                { id: 'email-input', type: 'box', x: 'center', y: 230, w: 300, h: 50, bg: '#0f172a', border: '1px solid #334155' },
+                { id: 'email-label', type: 'text', x: 'center', y: 245, content: 'Email Address', size: '14px', color: '#64748b' },
+                { id: 'pass-input', type: 'box', x: 'center', y: 300, w: 300, h: 50, bg: '#0f172a', border: '1px solid #334155' },
+                { id: 'login-btn', type: 'button', x: 'center', y: 380, content: 'Sign In', w: 300, bg: '#06b6d4' }
+            ]
+        };
+
+        // --- Core Logic ---
+
+        function setTool(toolName) {
+            state.tool = toolName;
+            document.querySelectorAll('.tool-btn').forEach(btn => {
+                btn.classList.toggle('selected', btn.dataset.tool === toolName);
+            });
+            // Update cursor style
+            canvas.style.cursor = toolName === 'select' ? 'default' : 'crosshair';
+        }
+
+        function createUniqueId() {
+            return 'el-' + Math.random().toString(36).substr(2, 9);
+        }
+
+        function renderElement(elData) {
+            const el = document.createElement('div');
+            el.id = elData.id;
+            el.className = `mk-el mk-${elData.type}`;
+            
+            // Initial Styles
+            updateElementStyle(el, elData);
+
+            // Type specific content
+            if (elData.type === 'text') {
+                el.innerHTML = elData.content;
+                el.style.fontSize = elData.size || '16px';
+                el.style.color = elData.color || 'white';
+                el.style.fontWeight = elData.weight || '400';
+            } else if (elData.type === 'button') {
+                el.innerText = elData.content || 'Button';
+                el.style.backgroundColor = elData.bg || '#3b82f6';
+                el.style.color = elData.color || 'white';
+            } else if (elData.type === 'box') {
+                el.style.backgroundColor = elData.bg || '#334155';
+                if(elData.border) el.style.border = elData.border;
+                if(elData.radius) el.style.borderRadius = elData.radius;
+            } else if (elData.type === 'image') {
+                el.innerHTML = '<i class="fa-regular fa-image" style="font-size: 2rem;"></i>';
+            }
+
+            // Events
+            el.addEventListener('mousedown', (e) => startDrag(e, elData.id));
+            
+            canvas.appendChild(el);
+            return el;
+        }
+
+        function updateElementStyle(domEl, data) {
+            // Handle positioning logic (center, pixels, percentages)
+            const parentW = canvas.clientWidth;
+            const parentH = canvas.clientHeight;
+
+            let x = data.x;
+            let y = data.y;
+
+            if (x === 'center') x = (parentW - (data.w || 100)) / 2;
+            if (y === 'center') y = (parentH - (data.h || 100)) / 2;
+
+            domEl.style.left = (typeof x === 'number' ? x + 'px' : x);
+            domEl.style.top = (typeof y === 'number' ? y + 'px' : y);
+            
+            if (data.w) domEl.style.width = typeof data.w === 'number' ? data.w + 'px' : data.w;
+            if (data.h) domEl.style.height = typeof data.h === 'number' ? data.h + 'px' : data.h;
+        }
+
+        function selectElement(id) {
+            state.selectedId = id;
+            document.querySelectorAll('.mk-el').forEach(el => el.classList.remove('selected'));
+            if (id) {
+                const el = document.getElementById(id);
+                if(el) el.classList.add('selected');
+                renderProperties(id);
+            } else {
+                renderProperties(null);
+            }
+        }
+
+        // --- Interaction (Mouse) ---
+        
+        canvas.addEventListener('mousedown', (e) => {
+            if (state.tool !== 'select') {
+                // Create new element
+                const rect = canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                const newEl = {
+                    id: createUniqueId(),
+                    type: state.tool,
+                    x: x,
+                    y: y,
+                    w: state.tool === 'text' ? 'auto' : 150,
+                    h: state.tool === 'text' ? 'auto' : (state.tool === 'button' ? 40 : 100),
+                    bg: state.tool === 'box' ? '#334155' : undefined,
+                    content: state.tool === 'text' ? 'New Text' : (state.tool === 'button' ? 'Button' : undefined)
+                };
+                
+                state.elements.push(newEl);
+                renderElement(newEl);
+                selectElement(newEl.id);
+                setTool('select'); // Switch back to select
+            } else if (e.target === canvas) {
+                selectElement(null);
+            }
+        });
+
+        function startDrag(e, id) {
+            e.stopPropagation();
+            if (state.tool !== 'select') return;
+            
+            selectElement(id);
+            state.isDragging = true;
+            
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+            state.dragStart = { x: clientX, y: clientY };
+            
+            const elData = state.elements.find(x => x.id === id);
+            // Handle 'center' or non-numeric positions by converting to current computed px
+            const domEl = document.getElementById(id);
+            state.elStart = { 
+                x: domEl.offsetLeft, 
+                y: domEl.offsetTop 
+            };
+        }
+
+        window.addEventListener('mousemove', (e) => {
+            if (state.isDragging && state.selectedId) {
+                const dx = e.clientX - state.dragStart.x;
+                const dy = e.clientY - state.dragStart.y;
+                
+                const elData = state.elements.find(x => x.id === state.selectedId);
+                elData.x = state.elStart.x + dx;
+                elData.y = state.elStart.y + dy;
+                
+                const domEl = document.getElementById(state.selectedId);
+                domEl.style.left = elData.x + 'px';
+                domEl.style.top = elData.y + 'px';
+                
+                // Update inputs if visible (throttle this in real app)
+                // updatePropInputs(); 
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            state.isDragging = false;
+        });
+        
+        // --- Properties Panel ---
+
+        function renderProperties(id) {
+            if (!id) {
+                propertiesPanel.innerHTML = `
+                    <div class="prop-group">
+                        <label class="prop-label">Selection</label>
+                        <div style="color: var(--text-muted); font-style: italic;">No element selected</div>
+                    </div>`;
+                return;
+            }
+
+            const el = state.elements.find(e => e.id === id);
+            
+            let html = `
+                <div class="prop-group">
+                    <label class="prop-label">Type</label>
+                    <div style="text-transform: capitalize;">${el.type}</div>
+                </div>
+                <div class="prop-group">
+                    <label class="prop-label">Position (X / Y)</label>
+                    <div class="prop-row">
+                        <input class="prop-input" type="number" value="${parseInt(el.x)}" onchange="updateProp('${id}', 'x', this.value)">
+                        <input class="prop-input" type="number" value="${parseInt(el.y)}" onchange="updateProp('${id}', 'y', this.value)">
+                    </div>
+                </div>
+                <div class="prop-group">
+                    <label class="prop-label">Dimensions (W / H)</label>
+                    <div class="prop-row">
+                        <input class="prop-input" type="text" value="${el.w}" onchange="updateProp('${id}', 'w', this.value)">
+                        <input class="prop-input" type="text" value="${el.h}" onchange="updateProp('${id}', 'h', this.value)">
+                    </div>
+                </div>
+            `;
+
+            if (el.type === 'text' || el.type === 'button') {
+                html += `
+                <div class="prop-group">
+                    <label class="prop-label">Content</label>
+                    <input class="prop-input" value="${el.content}" oninput="updateProp('${id}', 'content', this.value)">
+                </div>
+                <div class="prop-group">
+                    <label class="prop-label">Color</label>
+                    <input class="prop-input" type="color" value="${el.color || '#ffffff'}" onchange="updateProp('${id}', 'color', this.value)">
+                </div>
+                `;
+            }
+            if (el.type === 'button' || el.type === 'box') {
+                 html += `
+                <div class="prop-group">
+                    <label class="prop-label">Background</label>
+                    <input class="prop-input" type="color" value="${el.bg || '#334155'}" onchange="updateProp('${id}', 'bg', this.value)">
+                </div>`;
+            }
+
+            // Delete button
+            html += `
+            <div style="margin-top: 20px;">
+                <button class="btn" style="width: 100%; justify-content: center; background: rgba(239, 68, 68, 0.2); border-color: rgba(239, 68, 68, 0.5);" onclick="deleteElement('${id}')">
+                    <i class="fa-solid fa-trash"></i> Delete
+                </button>
+            </div>
+            `;
+
+            propertiesPanel.innerHTML = html;
+        }
+
+        function updateProp(id, key, value) {
+            const el = state.elements.find(e => e.id === id);
+            
+            // Numeric conversion for coords
+            if (key === 'x' || key === 'y') value = parseInt(value);
+            // Auto handling for width/height simple numbers
+            if ((key === 'w' || key === 'h') && !isNaN(value) && value !== 'auto') value = parseInt(value);
+
+            el[key] = value;
+            
+            // Re-render check
+            const domEl = document.getElementById(id);
+            if (key === 'content') {
+                if(el.type === 'text') domEl.innerHTML = value;
+                if(el.type === 'button') domEl.innerText = value;
+            } else if (key === 'bg') {
+                domEl.style.backgroundColor = value;
+            } else if (key === 'color') {
+                domEl.style.color = value;
+            } else {
+                updateElementStyle(domEl, el);
+            }
+        }
+
+        function deleteElement(id) {
+            state.elements = state.elements.filter(e => e.id !== id);
+            document.getElementById(id).remove();
+            selectElement(null);
+        }
+
+        function clearCanvas() {
+            state.elements = [];
+            canvas.innerHTML = '';
+            selectElement(null);
+        }
+
+        function loadTemplate(name) {
+            clearCanvas();
+            const tpl = JSON.parse(JSON.stringify(templates[name])); // Deep copy
+            
+            // Recalculate unique IDs to avoid conflicts if loaded multiple times (though clearCanvas handles it)
+            // Need to handle center logic in renderElement for initial load
+            tpl.forEach(el => {
+                const newId = createUniqueId();
+                el.id = newId;
+                state.elements.push(el);
+                renderElement(el);
+            });
+        }
+        
+        // --- Hand Tracking System ---
+        let hands = null;
+        let camera = null;
+
+        function toggleHandTracking() {
+            const overlay = document.getElementById('hand-overlay');
+            const btn = document.getElementById('hand-btn');
+            
+            if (!state.handTrackingActive) {
+                // Initialize
+                if (!hands) initMediaPipe();
+                overlay.classList.remove('hidden');
+                cursor.style.display = 'block';
+                btn.classList.add('active');
+                state.handTrackingActive = true;
+            } else {
+                overlay.classList.add('hidden');
+                cursor.style.display = 'none';
+                btn.classList.remove('active');
+                state.handTrackingActive = false;
+                // We don't stop the camera to allow quick toggle, but could do so for perf
+            }
+        }
+
+        function toggleCameraView() {
+            const vid = document.getElementById('webcam-video');
+            vid.style.opacity = vid.style.opacity === '0' ? '1' : '0';
+        }
+
+        function initMediaPipe() {
+            const videoElement = document.getElementById('webcam-video');
+            
+            hands = new Hands({locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+            }});
+            
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+            
+            hands.onResults(onHandResults);
+            
+            camera = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({image: videoElement});
+                },
+                width: 320,
+                height: 240
+            });
+            camera.start();
+        }
+
+        function onHandResults(results) {
+            if (!state.handTrackingActive) return;
+
+            const indicator = document.getElementById('gesture-indicator');
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                indicator.classList.add('active');
+                
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // 1. Map Coordinates of Index Finger Tip (8)
+                // Video is mirrored, so 1 - x
+                const indexTip = landmarks[8];
+                const thumbTip = landmarks[4];
+                
+                // Smooth interpolation could be added here, but direct mapping for simplicity first
+                const x = (1 - indexTip.x) * window.innerWidth;
+                const y = indexTip.y * window.innerHeight;
+                
+                // Update cursor
+                cursor.style.left = x + 'px';
+                cursor.style.top = y + 'px';
+                
+                // 2. Detect Pinch (Distance between 8 and 4)
+                // We use Euclidean distance (basic) in 2D normalized space
+                const dist = Math.sqrt(Math.pow((indexTip.x - thumbTip.x), 2) + Math.pow((indexTip.y - thumbTip.y), 2));
+                
+                // Threshold for pinch (tune this)
+                const PINCH_THRESHOLD = 0.05; 
+                
+                if (dist < PINCH_THRESHOLD) {
+                    if (!state.pinchState) {
+                        // Pinch Start (MouseDown)
+                        state.pinchState = true;
+                        cursor.classList.add('pinching');
+                        simulateMouseEvent('mousedown', x, y);
+                    } else {
+                        // Pinch Drag (MouseMove)
+                        simulateMouseEvent('mousemove', x, y);
+                    }
+                } else {
+                    if (state.pinchState) {
+                        // Pinch End (MouseUp)
+                        state.pinchState = false;
+                        cursor.classList.remove('pinching');
+                        simulateMouseEvent('mouseup', x, y);
+                    } else {
+                        // Hover (MouseMove)
+                        simulateMouseEvent('mousemove', x, y);
+                    }
+                }
+
+            } else {
+                indicator.classList.remove('active');
+            }
+        }
+
+        function simulateMouseEvent(type, x, y) {
+            // We need to identify appropriate target
+            const target = document.elementFromPoint(x, y);
+            
+            const evt = new MouseEvent(type, {
+                bubbles: true,
+                cancelable: true,
+                view: window,
+                clientX: x,
+                clientY: y
+            });
+            
+            if (target) target.dispatchEvent(evt);
+            
+            // Global listeners for drag also need to trigger
+            if (type === 'mousemove') window.dispatchEvent(evt);
+            if (type === 'mouseup') window.dispatchEvent(evt);
+        }
+
+        // --- Keyboard Shortcuts ---
+        window.addEventListener('keydown', (e) => {
+            if (e.target.tagName === 'INPUT') return; // Ignore if typing in properties
+
+            switch(e.key.toLowerCase()) {
+                case 'delete':
+                case 'backspace':
+                    if (state.selectedId) deleteElement(state.selectedId);
+                    break;
+                case 'v': setTool('select'); break;
+                case 'r': setTool('box'); break;
+                case 't': setTool('text'); break;
+                case 'i': setTool('image'); break;
+                case 'b': setTool('button'); break;
+            }
+        });
+
+    </script>
+</body>
+</html>
